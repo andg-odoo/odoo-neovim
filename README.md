@@ -54,6 +54,51 @@ wins):
 1. `odoo_ls_server` on your `PATH`
 2. the plugin-managed install under `vim.fn.stdpath('data') .. '/odoo'`
 
+## Installing the server
+
+The plugin can download and manage the server for you. With `setup()`, if no
+binary is found it fetches the configured release channel on launch:
+
+```lua
+require('odoo_ls').setup()
+```
+
+Both `odoo_ls_server` and the [typeshed](https://github.com/python/typeshed)
+stubs are installed under `vim.fn.stdpath('data') .. '/odoo'` (typically
+`~/.local/share/nvim/odoo/`), unpacked per release tag and symlinked to a
+stable path. The spec points `--stdlib` at the bundled stdlib automatically, so
+a managed install needs no `stdlib` entry in `odools.toml`.
+
+You can also (re)install on demand with `:OdooLs install` (or its alias
+`:OdooLsInstall`, defined by `setup()`):
+
+| Command                  | Description                                                    |
+| ------------------------ | -------------------------------------------------------------- |
+| `:OdooLs install`        | Install the configured `version` channel (default: `stable`)   |
+| `:OdooLs install stable` | Install the latest stable release                              |
+| `:OdooLs install latest` | Install the latest release of any kind (including prereleases) |
+| `:OdooLs install <tag>`  | Install a specific release tag (e.g. `1.2.1`)                  |
+
+On launch (with `setup()`), the plugin checks whether a newer release exists and
+notifies you; install it with the commands above. Update checks only run when
+`version` is `'stable'` or `'latest'` - a pinned tag disables them.
+
+### Plugin options
+
+Options are passed to `setup()` (all optional):
+
+```lua
+require('odoo_ls').setup({
+  checkVersion = true,    -- check for updates on startup (default: true)
+  checkFrequency = 24,    -- hours between update checks (default: 24)
+  version = 'stable',     -- 'stable', 'latest' (incl. prereleases) or a tag like '1.2.1'
+  profile = 'default',    -- odools.toml profile to select (default: 'default')
+  cmd = nil,              -- override the launch command (else auto-resolved)
+})
+```
+
+Requires `curl` (downloads) and `tar` / `unzip` (extraction) on your `PATH`.
+
 ## Configuration
 
 **The real configuration lives in `odools.toml`**, read by the server. See the
