@@ -51,6 +51,38 @@ local function config_list(profile, key)
   return out
 end
 
+--- Every config file the server drew a value from, nil before the first snapshot arrives.
+local function config_sources()
+  local cf = require('odoo_ls.protocol').state().config_file
+  if not cf or not cf.config then
+    return nil
+  end
+  local seen, out = {}, {}
+  local function collect(v)
+    if type(v) ~= 'table' then
+      return
+    end
+    for _, src in ipairs(v.sources or {}) do
+      if type(src) == 'string' and src:sub(1, 1) == '/' and not seen[src] then
+        seen[src] = true
+        table.insert(out, src)
+      end
+    end
+    if vim.islist(v) then
+      for _, item in ipairs(v) do
+        collect(item)
+      end
+    end
+  end
+  for _, profile in ipairs(cf.config) do
+    for _, value in pairs(profile) do
+      collect(value)
+    end
+  end
+  table.sort(out)
+  return out
+end
+
 -- The stdlib dir passed on the command line, if any (`--stdlib <dir>`).
 local function stdlib_arg(cmd)
   for i, a in ipairs(cmd) do
@@ -119,9 +151,7 @@ function M.check()
   end
 
   -- odools.toml ---------------------------------------------------------------
-  -- An explicit `--config-path` in cmd pins the file; otherwise the server
-  -- walks up from each WORKSPACE FOLDER (not cwd) to the filesystem root -
-  -- mirror that when a client is running, fall back to cwd otherwise.
+  -- The snapshot is authoritative because --config-path pins only one of several merged sources.
   local pinned
   for i, arg in ipairs(cmd) do
     if arg == '--config-path' then
@@ -129,17 +159,36 @@ function M.check()
     end
   end
   local running = vim.lsp.get_clients({ name = NAME })[1]
-  if pinned then
-    if uv.fs_stat(vim.fs.normalize(pinned)) then
-      h.ok('odools.toml (pinned via --config-path): ' .. pinned)
-    else
-      h.error('--config-path points at a missing file: ' .. pinned)
+  if pinned and not uv.fs_stat(vim.fs.normalize(pinned)) then
+    h.error('--config-path points at a missing file: ' .. pinned)
+  end
+  local sources = config_sources()
+  if sources and #sources > 0 then
+    local lines = { ('odools.toml in effect (%d):'):format(#sources) }
+    for _, src in ipairs(sources) do
+      table.insert(lines, ('  %s%s'):format(src, src == pinned and '  (pinned via --config-path)' or ''))
     end
+    h.ok(table.concat(lines, '\n'))
+  elseif sources then
+    h.info('no odools.toml contributed a value - the server is running on built-in defaults')
   else
+    -- No snapshot yet (client down, or setConfiguration not in): show what would be read.
     local start_dir = (running and running.root_dir) or vim.fn.getcwd()
     local found = vim.fs.find('odools.toml', { upward = true, path = start_dir })
-    if found[1] then
-      h.ok('odools.toml: ' .. found[1])
+    local candidates = {}
+    if pinned then
+      table.insert(candidates, pinned .. '  (pinned via --config-path)')
+    end
+    for _, f in ipairs(found) do
+      if f ~= pinned then
+        table.insert(candidates, f .. ('  (found upward from %s)'):format(start_dir))
+      end
+    end
+    if #candidates > 0 then
+      h.info(table.concat(
+        vim.list_extend({ 'odools.toml candidates (start the client for the definitive list):' }, candidates),
+        '\n  '
+      ))
     else
       h.info(('no odools.toml found upward from %s - the server will run with built-in defaults ("default" profile)'):format(start_dir))
     end
@@ -262,7 +311,7 @@ function M.check()
     else
       h.info('watcher registration not received yet - it arrives shortly after the server initializes')
     end
-    h.info('odools.toml is NOT covered by the watcher: edit it inside Neovim so the server picks up changes (external edits are missed)')
+    h.info('no odools.toml is covered by the watcher: edit them inside Neovim or the changes are missed')
   end
 
   -- typeshed / stdlib --------------------------------------------------------
