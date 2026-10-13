@@ -1,0 +1,240 @@
+*odoo_ls.txt*  Neovim client for the odoo-ls language server
+
+==============================================================================
+CONTENTS                                                    *odoo_ls-contents*
+
+  1. Introduction .................................................. |odoo_ls|
+  2. Quick start ........................................ |odoo_ls-quickstart|
+  3. Setup options ........................................... |odoo_ls-setup|
+  4. Commands ...................................................... |:OdooLs|
+  5. Lua API ................................................... |odoo_ls-api|
+  6. Server binary .......................................... |odoo_ls-binary|
+  7. Configuration ................................... |odoo_ls-configuration|
+  8. Health ................................................. |odoo_ls-health|
+  9. Notifications ................................... |odoo_ls-notifications|
+  10. Limitations ...................................... |odoo_ls-limitations|
+
+==============================================================================
+1. INTRODUCTION                                                      *odoo_ls*
+
+odoo_ls launches `odoo_ls_server`, the odoo-ls language server, answers its
+configuration request and handles its custom `$Odoo/*` notifications. The
+server owns the real configuration, read from `odools.toml`. The plugin adds
+no keymaps or UI beyond |vim.notify()| and |vim.ui.select()|.
+
+The client attaches to `python`, `xml`, `csv`, `javascript` and `typescript`
+buffers that have an `odools.toml` in their directory or above it. The
+directory holding the nearest one becomes the workspace folder.
+
+Requirements:
+- Neovim 0.11.2 or later.
+- For managed installs: `curl`, `tar` and `unzip` on `PATH`.
+
+==============================================================================
+2. QUICK START                                            *odoo_ls-quickstart*
+
+The spec in `lsp/odoo_ls.lua` is found on 'runtimepath', so no setup call is
+needed. Enable the server: >lua
+    vim.lsp.enable('odoo_ls')
+<
+This never downloads anything. Install a server with |:OdooLs-install| or
+put one on `PATH` (see |odoo_ls-binary|).
+
+Or call |odoo_ls.setup()|, which also installs the server release matching
+the plugin version when it is missing or outdated: >lua
+    require('odoo_ls').setup()
+<
+With lazy.nvim, loaded on the filetypes it serves. `cmd` defines |:OdooLs|
+before the first such buffer is opened: >lua
+    {
+      'odoo/odoo-neovim',
+      ft = { 'python', 'xml', 'csv', 'javascript', 'typescript' },
+      cmd = 'OdooLs',
+      config = function()
+        vim.lsp.enable('odoo_ls')
+      end,
+    }
+<
+==============================================================================
+3. SETUP OPTIONS                                               *odoo_ls-setup*
+
+All options of |odoo_ls.setup()| are optional.
+
+profile                                                *odoo_ls-setup-profile*
+    string, default unset.
+    Profile of `odools.toml` to select, forwarded as
+    `settings.Odoo.selectedProfile`. When unset the spec selects `"default"`.
+
+cmd                                                        *odoo_ls-setup-cmd*
+    string[], default unset.
+    Launch command of the server. When set, it wins over the resolution in
+    |odoo_ls-binary| and no install is attempted.
+
+==============================================================================
+4. COMMANDS                                                          *:OdooLs*
+
+:OdooLs                 Same as `:OdooLs health`.
+
+:OdooLs health                                                *:OdooLs-health*
+    Run `:checkhealth odoo_ls`, see |odoo_ls-health|.
+
+:OdooLs profile                                              *:OdooLs-profile*
+    Pick a profile from the last configuration the server sent, through
+    |vim.ui.select()|, and restart the server with it. The list ends with
+    `"Disabled"`. Warns when no configuration was received yet.
+
+:OdooLs restart                                              *:OdooLs-restart*
+    Stop every client and start it again on the same buffers. A shutdown
+    that stalls is force-killed after 4 seconds. Enables the server when no
+    client runs.
+
+:OdooLs logs                                                    *:OdooLs-logs*
+    Open the newest file in the `logs/` directory next to the server binary.
+
+:OdooLs install                                              *:OdooLs-install*
+    Download the server release matching the plugin version and its
+    typeshed, make them current and enable the client.
+
+==============================================================================
+5. LUA API                                                       *odoo_ls-api*
+
+`require('odoo_ls')` exposes exactly these functions.
+
+odoo_ls.setup({opts})                                        *odoo_ls.setup()*
+    Store {opts} (|odoo_ls-setup|) and forward `profile` and `cmd` to
+    |vim.lsp.config()|. When no binary is found or the managed install is
+    another release, install the matching one and enable the client once
+    done. Otherwise enable the client.
+
+odoo_ls.restart()                                          *odoo_ls.restart()*
+    Same as |:OdooLs-restart|.
+
+odoo_ls.set_profile({profile})                         *odoo_ls.set_profile()*
+    Select {profile} (string) in the stored config and in the running
+    clients, then restart. `"Disabled"` makes the server idle.
+
+odoo_ls.install()                                          *odoo_ls.install()*
+    Same as |:OdooLs-install|. Works without setup().
+
+==============================================================================
+6. SERVER BINARY                                              *odoo_ls-binary*
+
+The launch command is resolved on each server start, in this order:
+1. A `cmd` set through |odoo_ls.setup()| or |vim.lsp.config()|.
+2. The managed install: `stdpath('data')/odoo/<tag>/odoo_ls_server`, where
+   <tag> is the line in `stdpath('data')/odoo/current`.
+3. The legacy hand-placed `stdpath('data')/odoo/odoo_ls_server`.
+4. `odoo_ls_server` on `PATH`.
+
+Managed installs ~
+Each release is unpacked into its own `stdpath('data')/odoo/<tag>/`, with
+typeshed in `<tag>/typeshed/` where the server finds it, so no `stdlib` key
+is needed. The tag is written to `current` only after both archives are
+extracted, so a failed install keeps the working one. Older tag directories
+are then removed. Symlinks left by older installers are removed too.
+
+Versions ~
+Each plugin version installs the odoo-ls release with the same number, and
+|odoo_ls.setup()| replaces a managed install of another release on start, so
+updating the plugin updates the server. To run another release, pin or switch
+the plugin in your plugin manager. A `cmd` or `PATH` binary is never replaced,
+and |odoo_ls-health| warns when its version differs. The `alpha` branch has
+no published builds: build it with `cargo install` and pass it as `cmd`, with
+typeshed set through `stdlib` in `odools.toml`.
+
+Platforms ~
+Linux (glibc and Alpine) and macOS on x86_64 and aarch64. Windows is best
+effort and untested: both archives are extracted with its bundled `tar`, and
+removing an old tag directory may fail while its server runs.
+
+==============================================================================
+7. CONFIGURATION                                       *odoo_ls-configuration*
+
+The server reads `odools.toml`, walking up from the workspace folder. Each
+profile is one `[[config]]` table, and keys outside such a table are ignored:
+>toml
+    [[config]]
+    name = "default"
+    odoo_path = "/home/user/src/odoo"
+    addons_paths = ["/home/user/src/enterprise"]
+    python_path = "/usr/bin/python3"
+<
+The full schema is documented in the odoo-ls repository.
+
+The client decides only two things:
+- `settings.Odoo.selectedProfile`, the profile to load, `"default"` unless
+  set. `"Disabled"` makes the server idle without loading anything.
+- `cmd`, how to launch the binary (|odoo_ls-binary|).
+
+Set them with |vim.lsp.config()| or |odoo_ls.setup()|: >lua
+    vim.lsp.config('odoo_ls', {
+      cmd = { '/abs/path/to/odoo_ls_server' },
+      settings = { Odoo = { selectedProfile = 'My Setup' } },
+    })
+<
+The server reads its configuration only on start, so switching profile
+needs a restart. |:OdooLs-profile| and |odoo_ls.set_profile()| restart it.
+
+==============================================================================
+8. HEALTH                                                     *odoo_ls-health*
+
+`:checkhealth odoo_ls` (or |:OdooLs-health|) reports:
+- the Neovim version,
+- the binary that won (user `cmd`, managed and its tag, legacy, `PATH`), its
+  path and `--version`, and a warning for a legacy binary or a version that
+  differs from the plugin's,
+- a `--config-path` pointing at a missing file, and an `odools.toml` without
+  `[[config]]`,
+- the `odools.toml` files in effect, or the candidates found before the
+  client runs,
+- whether the client runs, its server pid, profile and loading status,
+- attached buffers outside `odoo_path`/`addons_paths`,
+- the file watching state (|odoo_ls-limitations|),
+- the typeshed or `stdlib` in use, and whether `tsserver` is found,
+- pyright or basedpyright attached alongside,
+- the server's config and runtime diagnostics, and the last crash.
+
+Once the server has sent its configuration, a second section
+"odoo_ls: profile <name>" lists each key of the active profile that a file
+or argument sets, with its sources, the count of keys left at their default
+and the other profiles.
+
+==============================================================================
+9. NOTIFICATIONS                                       *odoo_ls-notifications*
+
+Shown once per session:
+- No server binary found: run |:OdooLs-install|.
+- A legacy `stdpath('data')/odoo/odoo_ls_server` is used: run
+  |:OdooLs-install| to switch to managed installs.
+- The `default` profile is selected while `odools.toml` has a `main` one,
+  which the client selected before 1.6.1: pass `profile = 'main'` or rename
+  it.
+- The workspace `odools.toml` has keys but no `[[config]]` table, so the
+  server ignores it.
+
+The server's own messages are forwarded too: config and runtime
+diagnostics, loading statuses other than start and stop, an invalid
+`python_path`, restart requests (the client restarts) and crashes.
+
+==============================================================================
+10. LIMITATIONS                                          *odoo_ls-limitations*
+
+Position encoding ~
+Only `utf-16` is advertised, because every client on a buffer must agree and
+lemminx shares the XML buffers. Override `capabilities` to change it.
+
+File watching ~
+Neovim disables `workspace/didChangeWatchedFiles` by default on Linux and
+BSD, so a `git pull` or branch switch is not seen by the server. Run
+|:OdooLs-restart| after one, or opt in, at a CPU cost on large trees: >lua
+    vim.lsp.config('odoo_ls', {
+      capabilities = { workspace = {
+        didChangeWatchedFiles = { dynamicRegistration = true },
+      } },
+    })
+<
+odools.toml ~
+`odools.toml` is not watched. Edits made outside Neovim are missed until the
+server restarts.
+
+ vim:tw=78:ts=8:noet:ft=help:norl:

@@ -3,70 +3,17 @@ local M = {}
 
 local NAME = 'odoo_ls'
 
-local uv = vim.uv or vim.loop
+local uv = vim.uv
 
-local function resolved_cmd()
-  local cfg = vim.lsp.config[NAME]
-  if cfg and cfg.cmd then
-    return cfg.cmd
-  end
-  return require('odoo_ls.resolve').resolve_cmd()
-end
-
-local function active_profile()
-  return require('odoo_ls.api').active_profile()
-end
-
--- The active profile's entry in the last setConfiguration, or nil.
-local function profile_entry(profile)
-  local cf = require('odoo_ls.protocol').state().config_file
-  for _, p in ipairs(cf and cf.config or {}) do
-    if p.name == profile then
-      return p
-    end
-  end
-end
-
--- Scalar config key: entries arrive as `{value=..., sources=...}`.
-local function config_value(profile, key)
-  local p = profile_entry(profile)
-  local v = p and p[key]
-  if type(v) == 'table' then
-    return v.value
-  end
-  return v
-end
-
--- List config key (e.g. addons_paths): array of `{value=...}` entries.
-local function config_list(profile, key)
-  local p = profile_entry(profile)
-  local out = {}
-  if p and vim.islist(p[key]) then
-    for _, e in ipairs(p[key]) do
-      if type(e) == 'table' and type(e.value) == 'string' and e.value ~= '' then
-        table.insert(out, e.value)
-      end
-    end
-  end
-  return out
-end
-
--- The stdlib dir passed on the command line, if any (`--stdlib <dir>`).
-local function stdlib_arg(cmd)
-  for i, a in ipairs(cmd) do
-    if a == '--stdlib' then
-      return cmd[i + 1]
-    end
-  end
-  return nil
-end
+local protocol = require('odoo_ls.protocol')
+local st = protocol.state
 
 function M.check()
   local h = vim.health
-  local resolve = require('odoo_ls.resolve')
+  local server = require('odoo_ls.server')
+  local profile = require('odoo_ls.api').active_profile()
   h.start('odoo-ls.nvim')
 
-  -- Neovim version -----------------------------------------------------------
   if vim.fn.has('nvim-0.11.2') == 1 then
     local v = vim.version()
     h.ok(('Neovim %d.%d.%d'):format(v.major, v.minor, v.patch))
@@ -74,32 +21,21 @@ function M.check()
     h.error('Neovim 0.11.2+ is required')
   end
 
-  -- Server binary ------------------------------------------------------------
-  -- Report which of the three sources won: an explicit user `cmd`, `PATH`, or
-  -- the installer's data-dir binary.
-  local cmd = resolved_cmd()
-  local default = resolve.resolve()
-  local source
-  if vim.deep_equal(cmd, default.cmd) then
-    source = default.source
-  else
-    source = 'user'
-  end
-  local labels = {
+  local resolved = server.effective()
+  local cmd, source = resolved.cmd, resolved.source
+  local label = ({
     user = 'user cmd (vim.lsp.config/setup)',
+    managed = 'managed ' .. tostring(resolved.tag),
+    legacy = 'legacy data-dir binary',
     path = 'PATH',
-    data = 'installer data-dir',
     none = 'none',
-  }
+  })[source]
 
   local exe = cmd[1]
   local path = vim.fn.exepath(exe)
-  if path == '' and uv.fs_stat(exe) then
-    path = exe -- absolute path not on PATH (data-dir install)
-  end
   if path == '' then
-    h.error('server binary not found (source: ' .. labels[source] .. '): ' .. tostring(exe), {
-      'Install via :OdooLsInstall (downloads a release), or',
+    h.error('server binary not found (source: ' .. label .. '): ' .. tostring(exe), {
+      'Install a release with :OdooLs install, or',
       'put odoo_ls_server on PATH, or',
       "point at it: vim.lsp.config('odoo_ls', { cmd = { '/abs/path/odoo_ls_server' } })",
     })
@@ -111,17 +47,18 @@ function M.check()
     if ok and res and res.stdout and vim.trim(res.stdout) ~= '' then
       version = vim.trim(res.stdout)
     end
-    h.ok(('server binary [%s]: %s (%s)'):format(labels[source], path, version))
-    local tag = resolve.installed_tag()
-    if tag then
-      h.info('installer data-dir release: ' .. tag)
+    h.ok(('server binary [%s]: %s (%s)'):format(label, path, version))
+    if source == 'legacy' then
+      h.warn('legacy hand-placed install, run :OdooLs install to switch to managed installs')
+    end
+    local found = version:match('(%d+%.%d+%.%d+)')
+    if found and found ~= server.VERSION then
+      local fix = source == 'managed' and 'Run :OdooLs install' or 'Run :OdooLs install, or install odoo_ls_server ' .. server.VERSION
+      h.warn(('server %s does not match the plugin version %s'):format(found, server.VERSION), { fix })
     end
   end
 
-  -- odools.toml ---------------------------------------------------------------
-  -- An explicit `--config-path` in cmd pins the file; otherwise the server
-  -- walks up from each WORKSPACE FOLDER (not cwd) to the filesystem root -
-  -- mirror that when a client is running, fall back to cwd otherwise.
+  -- The snapshot is authoritative because --config-path pins only one of several merged sources.
   local pinned
   for i, arg in ipairs(cmd) do
     if arg == '--config-path' then
@@ -129,53 +66,56 @@ function M.check()
     end
   end
   local running = vim.lsp.get_clients({ name = NAME })[1]
-  if pinned then
-    if uv.fs_stat(vim.fs.normalize(pinned)) then
-      h.ok('odools.toml (pinned via --config-path): ' .. pinned)
-    else
-      h.error('--config-path points at a missing file: ' .. pinned)
+  if pinned and not uv.fs_stat(vim.fs.normalize(pinned)) then
+    h.error('--config-path points at a missing file: ' .. pinned)
+  end
+  local toml = running and running.root_dir and running.root_dir .. '/odools.toml'
+  if toml and protocol.lacks_config_table(toml) then
+    h.warn('odools.toml has no [[config]] table, so the server ignores it: ' .. vim.fn.fnamemodify(toml, ':~'), { 'Wrap its keys in [[config]]' })
+  end
+  local sources = st.config_files
+  if sources and #sources > 0 then
+    local lines = { ('odools.toml in effect (%d):'):format(#sources) }
+    for _, src in ipairs(sources) do
+      table.insert(lines, ('  %s%s'):format(src, src == pinned and '  (pinned via --config-path)' or ''))
     end
+    h.ok(table.concat(lines, '\n'))
+  elseif sources then
+    h.info('no odools.toml contributed a value - the server is running on built-in defaults')
   else
+    -- No snapshot yet (client down, or setConfiguration not in): show what would be read.
     local start_dir = (running and running.root_dir) or vim.fn.getcwd()
     local found = vim.fs.find('odools.toml', { upward = true, path = start_dir })
-    if found[1] then
-      h.ok('odools.toml: ' .. found[1])
+    local candidates = {}
+    if pinned then
+      table.insert(candidates, pinned .. '  (pinned via --config-path)')
+    end
+    for _, f in ipairs(found) do
+      if f ~= pinned then
+        table.insert(candidates, f .. ('  (found upward from %s)'):format(start_dir))
+      end
+    end
+    if #candidates > 0 then
+      h.info(table.concat(
+        vim.list_extend({ 'odools.toml candidates (start the client for the definitive list):' }, candidates),
+        '\n  '
+      ))
     else
       h.info(('no odools.toml found upward from %s - the server will run with built-in defaults ("default" profile)'):format(start_dir))
     end
   end
 
-  -- Client -------------------------------------------------------------------
   local clients = vim.lsp.get_clients({ name = NAME })
   if #clients == 0 then
-    h.info('client not running (open a python/xml/csv/javascript file in a project to start it)')
+    h.info('client not running (it attaches to python/xml/csv/js/ts files under an odools.toml)')
   else
-    local st = require('odoo_ls.protocol').state()
     for _, c in ipairs(clients) do
-      h.ok(('client running (id=%d, server pid=%s, profile=%s)'):format(c.id, tostring(st.pid or '?'), active_profile()))
+      h.ok(('client running (id=%d, server pid=%s, profile=%s)'):format(c.id, tostring(st.pid or '?'), profile))
     end
     if st.loading then
       h.info('loading status: ' .. st.loading)
     end
-    if st.crashed then
-      h.error('the server reported a crash - see :OdooLs config')
-    end
-    if #st.config_diagnostics > 0 or #st.server_diagnostics > 0 then
-      h.warn(('%d config diagnostic(s), %d server diagnostic(s) - see :OdooLs config'):format(
-        #st.config_diagnostics,
-        #st.server_diagnostics
-      ))
-    end
-
-    -- Per-buffer checks: two independent verdicts.
-    -- (scope) Files outside odoo_path/addons_paths are analyzed as isolated
-    -- "custom entry points" - model completions/hover degraded while the
-    -- client looks healthy (reads as "the plugin broke" when opening a file
-    -- from another odoo worktree).
-    -- (coverage) The server fully re-analyzes MODIFIED buffers only when they
-    -- live under a workspace folder: an uncovered buffer silently degrades on
-    -- its first edit (types become Any, semantic tokens drop) until reloaded,
-    -- even inside odoo_path.
+    -- Files outside odoo_path/addons_paths are analyzed as isolated custom entry points
     local function realpaths(list)
       return vim.tbl_map(function(p)
         return uv.fs_realpath(p) or p
@@ -189,25 +129,13 @@ function M.check()
       end
       return false
     end
-    local prof = active_profile()
-    local roots = {}
-    local odoo_path = config_value(prof, 'odoo_path')
-    if type(odoo_path) == 'string' and odoo_path ~= '' then
-      table.insert(roots, odoo_path)
-    end
-    vim.list_extend(roots, config_list(prof, 'addons_paths'))
-    roots = realpaths(roots)
+    local cfg = st.config or {}
+    local roots = realpaths(vim.list_extend({ cfg.odoo_path }, cfg.addons_paths or {}))
     if #roots == 0 then
       h.info('buffer scope not checked (no odoo_path/addons_paths received from the server yet)')
     end
     local in_scope = 0
     for _, c in ipairs(clients) do
-      local folders = realpaths(vim.tbl_map(function(wf)
-        return vim.uri_to_fname(wf.uri)
-      end, c.workspace_folders or {}))
-      if #folders == 0 then
-        h.warn('client has no workspace folders - every buffer degrades on its first edit')
-      end
       for buf in pairs(c.attached_buffers or {}) do
         local name = vim.api.nvim_buf_get_name(buf)
         if name ~= '' then
@@ -221,13 +149,6 @@ function M.check()
           elseif #roots > 0 then
             in_scope = in_scope + 1
           end
-          if #folders > 0 and not under(real, folders) then
-            h.warn(short .. ' is not under any WORKSPACE FOLDER - analysis degrades on the first edit (types become Any) until the file is reloaded', {
-              'Cover your checkouts explicitly:',
-              "vim.lsp.config('odoo_ls', { workspace_folders = { { uri = vim.uri_from_fname('/path/to/odoo'), name = 'odoo' } } })",
-              'or open the file from a directory whose root_markers resolve to the checkout.',
-            })
-          end
         end
       end
     end
@@ -235,11 +156,7 @@ function M.check()
       h.ok(('%d attached buffer(s) inside the configured project'):format(in_scope))
     end
 
-    -- File watcher ----------------------------------------------------------
-    -- The server registers a workspace/didChangeWatchedFiles watcher, but
-    -- Neovim only honors it when the CLIENT advertised dynamicRegistration
-    -- for it - which core disables by default on Linux/BSD (limited backends,
-    -- see neovim #27807). Both halves must be true for watching to work.
+    -- Watching needs both the server registration and the client capability (neovim#27807)
     local c = clients[1]
     local advertised = vim.tbl_get(c.capabilities, 'workspace', 'didChangeWatchedFiles', 'dynamicRegistration') == true
     local registered = false
@@ -262,37 +179,22 @@ function M.check()
     else
       h.info('watcher registration not received yet - it arrives shortly after the server initializes')
     end
-    h.info('odools.toml is NOT covered by the watcher: edit it inside Neovim so the server picks up changes (external edits are missed)')
+    h.info('no odools.toml is covered by the watcher: edit them inside Neovim or the changes are missed')
   end
 
-  -- typeshed / stdlib --------------------------------------------------------
-  -- Data-dir installs bundle typeshed (and the spec points --stdlib at it).
-  -- PATH/cargo binaries have no bundled stubs, so the standard library must be
-  -- supplied via odools.toml (stdlib / additional_stubs) or a --stdlib flag.
-  local stdlib = stdlib_arg(cmd)
-  if stdlib then
-    if uv.fs_stat(stdlib) then
-      h.ok('stdlib (--stdlib): ' .. stdlib)
-    else
-      h.warn('--stdlib points at a missing directory: ' .. stdlib)
-    end
-  elseif source == 'data' then
-    local typeshed = resolve.data_dir .. '/typeshed'
-    if uv.fs_stat(typeshed) then
-      h.ok('bundled typeshed: ' .. typeshed)
-    else
-      h.warn('data-dir install has no typeshed - reinstall via :OdooLsInstall')
-    end
+  -- The server loads typeshed from next to its own executable (odoo-ls server/src/core/odoo.rs).
+  local typeshed = path ~= '' and vim.fs.joinpath(vim.fs.dirname(uv.fs_realpath(path) or path), 'typeshed')
+  if typeshed and uv.fs_stat(typeshed .. '/stdlib') then
+    h.ok('bundled typeshed: ' .. typeshed)
+  elseif st.config and st.config.stdlib and st.config.stdlib ~= '' then
+    h.ok('stdlib (odools.toml): ' .. st.config.stdlib)
   else
-    h.info('no bundled typeshed for this binary - supply the standard library via odools.toml (stdlib / additional_stubs) or a --stdlib flag')
+    h.info('no typeshed next to the binary - supply the standard library via odools.toml (stdlib / additional_stubs)')
   end
 
-  -- tsserver -----------------------------------------------------------------
-  local profile = active_profile()
-  local tsserver = config_value(profile, 'tsserver_command')
-  if tsserver == nil then
-    -- fall back to the documented default
-    tsserver = 'tsserver'
+  local tsserver = vim.tbl_get(st, 'config', 'tsserver_command') or 'tsserver'
+  if st.js ~= nil then
+    h.info('tsserver running in the server: ' .. (st.js and 'yes' or 'no'))
   end
   if tsserver == '' then
     h.info('tsserver_command is empty - JavaScript/OWL features are deliberately disabled')
@@ -310,13 +212,55 @@ function M.check()
     end
   end
 
-  -- Companion language servers ----------------------------------------------
   local companions = vim.lsp.get_clients({ name = 'pyright' })
   vim.list_extend(companions, vim.lsp.get_clients({ name = 'basedpyright' }))
   if #companions > 0 then
     h.warn('pyright/basedpyright is also attached - it overlaps with odoo-ls Python features and may conflict')
   end
   h.info('ruff (formatting/linting only) coexists fine with odoo-ls')
+
+  if not st.config then
+    h.info('no configuration received from the server yet')
+  else
+    h.start('odoo_ls: profile ' .. profile)
+    local keys = vim.tbl_keys(st.config)
+    table.sort(keys)
+    local defaults = 0
+    for _, k in ipairs(keys) do
+      local v, sources = st.config[k], st.sources[k]
+      -- `$default` is the server's built-in value, `$cli` and `$workspaceFolder:` are derived ones
+      if vim.iter(sources):any(function(src)
+        return src ~= '$default'
+      end) then
+        local shown = vim.islist(v) and table.concat(vim.tbl_map(tostring, v), ', ')
+          or type(v) == 'table' and vim.inspect(v):gsub('%s+', ' ')
+          or tostring(v)
+        h.info(('%s = %s  (%s)'):format(k, shown, table.concat(sources, ', ')))
+      else
+        defaults = defaults + 1
+      end
+    end
+    h.info(('%d other keys at their built-in defaults'):format(defaults))
+    local others = vim.tbl_filter(function(name)
+      return name ~= profile
+    end, st.profiles)
+    if #others > 0 then
+      h.info('other profiles: ' .. table.concat(others, ', '))
+    end
+  end
+  for _, d in ipairs(st.config_diagnostics) do
+    local where = d.profile and d.profile ~= '' and (' [' .. d.profile .. ']') or ''
+    local report = d.level == 2 and h.error or h.warn
+    report('config' .. where .. ': ' .. tostring(d.message))
+  end
+  for _, d in ipairs(st.server_diagnostics) do
+    local report = ({ [1] = h.warn, [2] = h.error })[d.level] or h.info
+    report('server: ' .. tostring(d.message))
+  end
+  if st.crashed then
+    local lines = vim.split(st.crash_info or 'server crashed', '\n', { plain = true })
+    h.error(table.concat(vim.list_slice(lines, 1, 20), '\n'), { 'full text in :OdooLs logs' })
+  end
 end
 
 return M
