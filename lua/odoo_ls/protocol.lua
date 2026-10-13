@@ -1,9 +1,4 @@
---- Custom `$Odoo/*` notification protocol for the odoo-ls language server.
----
---- The server owns all real configuration (via `odools.toml`, discovered
---- server-side). This module only reflects the small stream of server-pushed
---- notifications into `vim.notify` and a module-local state table that the
---- public API (`odoo_ls`) reads for statuslines, `:OdooLs config`, and health.
+--- Custom `$Odoo/*` notifications of odoo-ls, normalised into the state the API and health read.
 local M = {}
 
 local levels = vim.log.levels
@@ -20,41 +15,40 @@ local levels = vim.log.levels
 ---@class odoo_ls.State
 ---@field pid integer|nil          server process id (from `$Odoo/setPid`)
 ---@field loading string|nil       last loading status ('start'|'stop'|other)
----@field config_file table|nil    `configFile` from `$Odoo/setConfiguration`
+---@field js boolean|nil           whether the server's tsserver runs (from `$Odoo/jsLsStatus`)
+---@field profiles string[]|nil    non-abstract profile names, nil before the first snapshot
+---@field config table<string, any>|nil       active profile's values as plain Lua values
+---@field sources table<string, string[]>|nil  sorted sources of each key in `config`
+---@field config_files string[]|nil  every config file that contributed a value to any profile
 ---@field config_diagnostics odoo_ls.ConfigDiagnostic[]
 ---@field server_diagnostics odoo_ls.ServerDiagnostic[]
 ---@field crashed boolean
 ---@field crash_info string|nil    full crash text (from panic hook)
 
+--- Normalised server state, written only by the handlers below and read by the API and health.
 ---@type odoo_ls.State
 local state = {
-  pid = nil,
-  loading = nil,
-  config_file = nil,
   config_diagnostics = {},
   server_diagnostics = {},
   crashed = false,
-  crash_info = nil,
 }
 
 local function notify(msg, level)
   vim.notify(msg, level, { title = 'odoo_ls' })
 end
 
---- LSP notification handlers keyed by method. Registered on the client via
---- `lsp/odoo_ls.lua`. Signature matches nvim's `lsp-handler`:
---- `fun(err, result, ctx, config)` where `result` is the notification params.
---- All handlers are resilient to nil / unexpected payloads.
+--- `lsp-handler`s keyed by method, registered on the client by `lsp/odoo_ls.lua`.
 ---@type table<string, fun(err:any, result:any, ctx:any, config:any)>
 local handlers = {}
 
+-- The first notification of a new server, so state left by a previous one is cleared here
 handlers['$Odoo/setPid'] = function(_, result)
-  if type(result) == 'table' then
-    state.pid = result.server_pid
-  end
+  state.pid = type(result) == 'table' and result.server_pid or nil
+  state.crashed, state.crash_info = false, nil
+  state.config_diagnostics, state.server_diagnostics = {}, {}
 end
 
--- Loading status. Payload is a BARE STRING ('start'|'stop'|other).
+-- Loading status, sent as a bare string ('start'|'stop'|other)
 handlers['$Odoo/loadingStatusUpdate'] = function(_, result)
   if type(result) ~= 'string' then
     return
@@ -79,22 +73,100 @@ end
 
 handlers['$Odoo/restartNeeded'] = function()
   notify('server requested a restart', levels.INFO)
-  require('odoo_ls').restart()
+  require('odoo_ls.api').restart()
 end
 
--- Full configuration snapshot (profiles + config-file diagnostics).
--- The `html` field is vscode webview fodder and is ignored.
-handlers['$Odoo/setConfiguration'] = function(_, result)
+-- Unwrap the `{value, sources, info}` leaves of a config key, collecting their sources.
+local function unwrap(v, sources)
+  if type(v) ~= 'table' then
+    return v
+  end
+  if v.sources then
+    for _, src in ipairs(v.sources) do
+      sources[src] = true
+    end
+    return v.value
+  end
+  local out = {}
+  for k, e in pairs(v) do
+    out[k] = unwrap(e, sources)
+  end
+  return out
+end
+
+local PROFILE_ATTRS = { name = true, extends = true, abstract = true }
+
+--- Whether the odools.toml at `path` has keys but no `[[config]]` table, so the server ignores it.
+---@param path string
+---@return boolean
+function M.lacks_config_table(path)
+  local ok, lines = pcall(vim.fn.readfile, path)
+  local has_key = false
+  for _, line in ipairs(ok and lines or {}) do
+    if line:match('^%s*%[%[config%]%]') then
+      return false
+    end
+    has_key = has_key or line:match('^%s*[^#%s][^=]*=') ~= nil
+  end
+  return has_key
+end
+
+local warned_main, warned_format = false, false
+
+-- Full configuration snapshot, ignoring the `html` field meant for the VS Code webview
+handlers['$Odoo/setConfiguration'] = function(_, result, ctx)
   if type(result) ~= 'table' then
     return
   end
-  state.config_file = result.configFile
+  local client = vim.lsp.get_client_by_id(ctx.client_id)
+  local active = client and vim.tbl_get(client.config, 'settings', 'Odoo', 'selectedProfile') or 'default'
+  local profiles, files = {}, {}
+  state.config, state.sources = nil, nil
+  for _, p in ipairs(result.configFile.config) do
+    if not p.abstract then
+      table.insert(profiles, p.name)
+    end
+    local values, sources = {}, {}
+    for key, v in pairs(p) do
+      if not PROFILE_ATTRS[key] then
+        local set = {}
+        values[key] = unwrap(v, set)
+        sources[key] = vim.tbl_keys(set)
+        table.sort(sources[key])
+        for src in pairs(set) do
+          if src:sub(1, 1) == '/' then
+            files[src] = true
+          end
+        end
+      end
+    end
+    if p.name == active then
+      state.config, state.sources = values, sources
+    end
+  end
+  state.profiles = profiles
+  if not warned_main and active == 'default' and vim.tbl_contains(profiles, 'main') then
+    warned_main = true
+    notify("this plugin now selects the `default` profile\nto keep `main`: setup({ profile = 'main' }) or rename it", levels.INFO)
+  end
+  local toml = client and client.root_dir and client.root_dir .. '/odools.toml'
+  if not warned_format and toml and M.lacks_config_table(toml) then
+    warned_format = true
+    notify('odools.toml has no [[config]] table, so the server ignores it\nwrap its keys in [[config]]: ' .. vim.fn.fnamemodify(toml, ':~'), levels.WARN)
+  end
+  state.config_files = vim.tbl_keys(files)
+  table.sort(state.config_files)
   state.config_diagnostics = result.diagnostics or {}
   for _, d in ipairs(state.config_diagnostics) do
     local lvl = d.level == 2 and levels.ERROR or levels.WARN
     local where = d.profile and d.profile ~= '' and (' [' .. d.profile .. ']') or ''
     notify('config' .. where .. ': ' .. tostring(d.message), lvl)
   end
+end
+
+-- tsserver status, a bare boolean that is true while the server's tsserver runs
+handlers['$Odoo/jsLsStatus'] = function(_, result)
+  state.js = result
 end
 
 local function server_level(n)
@@ -106,7 +178,7 @@ local function server_level(n)
   return levels.INFO
 end
 
--- Runtime server diagnostics (e.g. tsserver startup failure).
+-- Runtime server diagnostics, such as a tsserver startup failure
 handlers['$Odoo/diagnostic_config'] = function(_, result)
   if type(result) ~= 'table' then
     return
@@ -120,7 +192,7 @@ handlers['$Odoo/diagnostic_config'] = function(_, result)
   end
 end
 
--- Panic-hook crash notification. NOTE: no `$` prefix.
+-- Panic-hook crash notification, the one method without a `$` prefix
 handlers['Odoo/displayCrashNotification'] = function(_, result)
   state.crashed = true
   local info = type(result) == 'table' and result.crashInfo or nil
@@ -129,29 +201,17 @@ handlers['Odoo/displayCrashNotification'] = function(_, result)
   if info and #info > 400 then
     short = short .. '…'
   end
-  notify('server crashed: ' .. short .. '\n(run :OdooLs config for full details)', levels.ERROR)
+  notify('server crashed: ' .. short .. '\n(run :OdooLs for details)', levels.ERROR)
 end
 
 M.handlers = handlers
+M.state = state
 
---- Reset volatile state when the client exits. Called from the spec `on_exit`.
+--- Reset volatile state when the client exits, called from the spec `on_exit`.
 function M._on_exit()
   state.pid = nil
+  state.js = nil
   state.loading = 'stop'
-end
-
---- Read-only shallow copy of the current protocol state.
----@return odoo_ls.State
-function M.state()
-  return {
-    pid = state.pid,
-    loading = state.loading,
-    config_file = state.config_file,
-    config_diagnostics = state.config_diagnostics,
-    server_diagnostics = state.server_diagnostics,
-    crashed = state.crashed,
-    crash_info = state.crash_info,
-  }
 end
 
 return M
