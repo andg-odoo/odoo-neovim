@@ -27,7 +27,7 @@ buffers that have an `odools.toml` in their directory or above it. The
 directory holding the nearest one becomes the workspace folder.
 
 Requirements:
-- Neovim 0.11.2 or later.
+- Neovim 0.12 or later.
 - `odoo_ls_server` and its typeshed, see |odoo_ls-binary|.
 
 ==============================================================================
@@ -81,9 +81,8 @@ cmd                                                        *odoo_ls-setup-cmd*
     `"Disabled"`. Warns when no configuration was received yet.
 
 :OdooLs restart                                              *:OdooLs-restart*
-    Stop every client and start it again on the same buffers. A shutdown
-    that stalls is force-killed after 4 seconds. Enables the server when no
-    client runs.
+    Restart the client with `:lsp restart odoo_ls`, keeping its buffers.
+    Enables the server when no client runs.
 
 :OdooLs logs                                                    *:OdooLs-logs*
     Open the newest file in the `logs/` directory next to the server binary.

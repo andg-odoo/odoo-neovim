@@ -3,9 +3,9 @@ if vim.g.loaded_odoo_ls then
 end
 vim.g.loaded_odoo_ls = true
 
--- 0.11.2 is where vim.lsp.enable() attaches open buffers and disable stops clients
-if vim.fn.has('nvim-0.11.2') == 0 then
-  vim.notify('odoo-ls requires Neovim 0.11.2+', vim.log.levels.ERROR, { title = 'odoo_ls' })
+-- 0.12 is where :lsp restart exists
+if vim.fn.has('nvim-0.12') == 0 then
+  vim.notify('odoo-ls requires Neovim 0.12+', vim.log.levels.ERROR, { title = 'odoo_ls' })
   return
 end
 

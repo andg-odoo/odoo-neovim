@@ -16,11 +16,11 @@ function M.check()
   local profile = require('odoo_ls.api').active_profile()
   h.start('odoo-ls.nvim')
 
-  if vim.fn.has('nvim-0.11.2') == 1 then
+  if vim.fn.has('nvim-0.12') == 1 then
     local v = vim.version()
     h.ok(('Neovim %d.%d.%d'):format(v.major, v.minor, v.patch))
   else
-    h.error('Neovim 0.11.2+ is required')
+    h.error('Neovim 0.12+ is required')
   end
 
   local cmd = vim.lsp.config[NAME].cmd

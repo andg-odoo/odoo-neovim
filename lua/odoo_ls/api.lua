@@ -26,45 +26,13 @@ end
 
 M.active_profile = active_profile
 
---- Stop each client, force-killing a stalled shutdown, then start it again on the same buffers.
+--- Restart the server on the same buffers, or enable it when no client runs.
 function M.restart()
-  local clients = get_clients()
-  if #clients == 0 then
+  if #get_clients() == 0 then
     vim.lsp.enable(NAME)
     return
   end
-  for _, client in ipairs(clients) do
-    local config = client.config
-    local bufs = vim.tbl_keys(client.attached_buffers)
-    client:stop()
-    local timer = assert(vim.uv.new_timer())
-    local waited = 0
-    timer:start(
-      50,
-      50,
-      vim.schedule_wrap(function()
-        waited = waited + 50
-        if not client:is_stopped() then
-          if waited == 4000 then
-            -- force-kill a stalled shutdown so the restart never overlaps a live client
-            client:stop(true)
-          end
-          if waited < 8000 then
-            return
-          end
-        end
-        timer:stop()
-        if not timer:is_closing() then
-          timer:close()
-        end
-        for _, bufnr in ipairs(bufs) do
-          if vim.api.nvim_buf_is_valid(bufnr) then
-            vim.lsp.start(config, { bufnr = bufnr })
-          end
-        end
-      end)
-    )
-  end
+  vim.cmd.lsp({ 'restart', NAME })
 end
 
 --- Select `profile` in the stored spec and the running clients' settings, then restart.

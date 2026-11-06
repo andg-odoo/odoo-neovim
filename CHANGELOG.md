@@ -11,6 +11,7 @@ First versioned release, turning the configuration snippet into a full client.
 
 ### Breaking
 
+- Neovim 0.12 or later is required.
 - The default selected profile is `default` (was `main`). The server always has
   a built-in `default` profile. To keep `main`, pass `profile = 'main'` to
   `setup()`, set `settings.Odoo.selectedProfile`, or rename the profile.

@@ -12,7 +12,7 @@ Inside Neovim, the full reference is `:help odoo_ls`.
 
 ## Requirements
 
-- Neovim **0.11.2+**.
+- Neovim **0.12+**.
 - `odoo_ls_server` and its typeshed stubs from the
   [odoo-ls releases](https://github.com/odoo/odoo-ls/releases).
 
