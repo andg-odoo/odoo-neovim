@@ -90,9 +90,9 @@ vim.lsp.config('odoo_ls', {
 
 `:checkhealth odoo_ls` is the first stop when something looks wrong. It reports
 which binary runs and whether its version matches the plugin, which
-`odools.toml` files the server uses and the keys they set, buffers outside the
-workspace, typeshed, file watching, `tsserver`, overlapping Python servers, and
-every config and server diagnostic.
+`odools.toml` files the server uses and every key of the active profile,
+buffers outside the workspace, typeshed, file watching, overlapping Python and
+TypeScript servers, and every config and server diagnostic.
 
 ![:checkhealth odoo_ls with the active profile section](doc/assets/health.png)
 
@@ -115,9 +115,8 @@ with the same number, even when the client is unchanged. Changes are listed in
 
 1.6.1 changes defaults the snippet relied on: the selected profile is now
 `default` (was `main`), the client attaches only under an `odools.toml`, and
-that file must hold its keys in a `[[config]]` table. The client points out the
-first and the last when it meets them. See the Breaking section of the
-[CHANGELOG](CHANGELOG.md).
+that file must hold its keys in a `[[config]]` table. See the Breaking section
+of the [CHANGELOG](CHANGELOG.md).
 
 ## License
 

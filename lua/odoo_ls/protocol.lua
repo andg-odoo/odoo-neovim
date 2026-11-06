@@ -3,11 +3,6 @@ local M = {}
 
 local levels = vim.log.levels
 
----@class odoo_ls.ConfigDiagnostic
----@field level integer 1=warning, 2=error
----@field message string
----@field profile string
-
 ---@class odoo_ls.ServerDiagnostic
 ---@field level integer 0=info, 1=warning, 2=error
 ---@field message string
@@ -17,11 +12,7 @@ local levels = vim.log.levels
 ---@field pid integer|nil          server process id (from `$Odoo/setPid`)
 ---@field loading string|nil       last loading status ('start'|'stop'|other)
 ---@field js boolean|nil           whether the server's tsserver runs (from `$Odoo/jsLsStatus`)
----@field profiles string[]|nil    non-abstract profile names, nil before the first snapshot
----@field config table<string, any>|nil       active profile's values as plain Lua values
----@field sources table<string, string[]>|nil  sorted sources of each key in `config`
----@field config_files string[]|nil  every config file that contributed a value to any profile
----@field config_diagnostics odoo_ls.ConfigDiagnostic[]
+---@field configuration table|nil  last `$Odoo/setConfiguration` payload, as the server sent it
 ---@field server_diagnostics odoo_ls.ServerDiagnostic[]
 ---@field crashed boolean
 ---@field crash_info string|nil    full crash text (from panic hook)
@@ -29,7 +20,6 @@ local levels = vim.log.levels
 --- Normalised server state, written only by the handlers below and read by the API and health.
 ---@type odoo_ls.State
 local state = {
-  config_diagnostics = {},
   server_diagnostics = {},
   crashed = false,
 }
@@ -47,7 +37,7 @@ handlers['$Odoo/setPid'] = function(_, result, ctx)
   state.client_id = ctx.client_id
   state.pid = type(result) == 'table' and result.server_pid or nil
   state.crashed, state.crash_info = false, nil
-  state.config_diagnostics, state.server_diagnostics = {}, {}
+  state.configuration, state.server_diagnostics = nil, {}
 end
 
 -- Loading status, sent as a bare string ('start'|'stop'|other)
@@ -78,88 +68,13 @@ handlers['$Odoo/restartNeeded'] = function()
   require('odoo_ls.api').restart()
 end
 
--- Unwrap the `{value, sources, info}` leaves of a config key, collecting their sources.
-local function unwrap(v, sources)
-  if type(v) ~= 'table' then
-    return v
-  end
-  if v.sources then
-    for _, src in ipairs(v.sources) do
-      sources[src] = true
-    end
-    return v.value
-  end
-  local out = {}
-  for k, e in pairs(v) do
-    out[k] = unwrap(e, sources)
-  end
-  return out
-end
-
-local PROFILE_ATTRS = { name = true, extends = true, abstract = true }
-
---- Whether the odools.toml at `path` has keys but no `[[config]]` table, so the server ignores it.
----@param path string
----@return boolean
-function M.lacks_config_table(path)
-  local ok, lines = pcall(vim.fn.readfile, path)
-  local has_key = false
-  for _, line in ipairs(ok and lines or {}) do
-    if line:match('^%s*%[%[config%]%]') then
-      return false
-    end
-    has_key = has_key or line:match('^%s*[^#%s][^=]*=') ~= nil
-  end
-  return has_key
-end
-
-local warned_main, warned_format = false, false
-
--- Full configuration snapshot, ignoring the `html` field meant for the VS Code webview
-handlers['$Odoo/setConfiguration'] = function(_, result, ctx)
+-- Full configuration snapshot, read by the API and health
+handlers['$Odoo/setConfiguration'] = function(_, result)
   if type(result) ~= 'table' then
     return
   end
-  local client = vim.lsp.get_client_by_id(ctx.client_id)
-  local active = client and vim.tbl_get(client.config, 'settings', 'Odoo', 'selectedProfile') or 'default'
-  local profiles, files = {}, {}
-  state.config, state.sources = nil, nil
-  for _, p in ipairs(result.configFile.config) do
-    if not p.abstract then
-      table.insert(profiles, p.name)
-    end
-    local values, sources = {}, {}
-    for key, v in pairs(p) do
-      if not PROFILE_ATTRS[key] then
-        local set = {}
-        values[key] = unwrap(v, set)
-        sources[key] = vim.tbl_keys(set)
-        table.sort(sources[key])
-        for src in pairs(set) do
-          if src:sub(1, 1) == '/' then
-            files[src] = true
-          end
-        end
-      end
-    end
-    if p.name == active then
-      state.config, state.sources = values, sources
-    end
-  end
-  state.profiles = profiles
-  if not warned_main and active == 'default' and vim.tbl_contains(profiles, 'main') then
-    warned_main = true
-    notify("this plugin now selects the `default` profile\nto keep `main`: setup({ profile = 'main' }) or rename it", levels.INFO)
-  end
-  local toml = client and client.root_dir and client.root_dir .. '/odools.toml'
-  if not warned_format and toml and M.lacks_config_table(toml) then
-    warned_format = true
-    notify('odools.toml has no [[config]] table, so the server ignores it\nwrap its keys in [[config]]: ' .. vim.fn.fnamemodify(toml, ':~'), levels.WARN)
-  end
-  state.config_files = vim.tbl_keys(files)
-  table.sort(state.config_files)
-  state.config_diagnostics = result.diagnostics or {}
-  for _, d in ipairs(state.config_diagnostics) do
+  state.configuration = result
+  for _, d in ipairs(result.diagnostics or {}) do
     local lvl = d.level == 2 and levels.ERROR or levels.WARN
     local where = d.profile and d.profile ~= '' and (' [' .. d.profile .. ']') or ''
     notify('config' .. where .. ': ' .. tostring(d.message), lvl)

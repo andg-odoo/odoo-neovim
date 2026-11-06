@@ -31,6 +31,22 @@ end
 
 M.active_profile = active_profile
 
+--- Non-abstract profile names of the last configuration snapshot, nil before the first one.
+---@return string[]?
+function M.profiles()
+  local configuration = protocol.state.configuration
+  if not configuration then
+    return nil
+  end
+  local names = {}
+  for _, p in ipairs(vim.tbl_get(configuration, 'configFile', 'config') or {}) do
+    if not p.abstract then
+      table.insert(names, p.name)
+    end
+  end
+  return names
+end
+
 --- Restart the server on the same buffers, or enable it when no client runs.
 function M.restart()
   if not get_client() then
@@ -59,11 +75,12 @@ function M.select_profile()
     notify('odoo_ls is not running', vim.log.levels.WARN)
     return
   end
-  if not protocol.state.profiles then
+  local profiles = M.profiles()
+  if not profiles then
     notify('no configuration received from the server yet', vim.log.levels.WARN)
     return
   end
-  local profiles = vim.list_extend(vim.list_slice(protocol.state.profiles), { 'Disabled' })
+  table.insert(profiles, 'Disabled')
   local current = active_profile()
   vim.ui.select(profiles, {
     prompt = 'odoo_ls profile:',

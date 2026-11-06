@@ -154,35 +154,25 @@ needs a restart. |:OdooLs-profile| and |odoo_ls.set_profile()| restart it.
 - the Neovim version,
 - the binary path and `--version`, and a warning for a version that differs
   from the plugin's,
-- a `--config-path` pointing at a missing file, and an `odools.toml` without
-  `[[config]]`,
-- the `odools.toml` files in effect, or the candidates found before the
-  client runs,
+- the typeshed or `stdlib` in use,
+- a `--config-path` pointing at a missing file,
+- the `odools.toml` files in effect, as the server sent them,
 - whether the client runs, its server pid, profile and loading status,
 - attached buffers outside `odoo_path`/`addons_paths`,
 - the file watching state (|odoo_ls-limitations|),
-- the typeshed or `stdlib` in use, and whether `tsserver` is found,
-- pyright or basedpyright attached alongside,
+- pyright, basedpyright, ts_ls or vtsls attached alongside,
 - the server's config and runtime diagnostics, and the last crash.
 
 Once the server has sent its configuration, a second section
-"odoo_ls: profile <name>" lists each key of the active profile that a file
-or argument sets, with its sources, the count of keys left at their default
-and the other profiles.
+"odoo_ls: profile <name>" lists every key of the active profile with its
+sources, marking the built-in defaults, and the other profiles.
 
 ==============================================================================
 9. NOTIFICATIONS                                       *odoo_ls-notifications*
 
-Shown once per session:
-- The `default` profile is selected while `odools.toml` has a `main` one,
-  which the client selected before 1.6.1: pass `profile = 'main'` or rename
-  it.
-- The workspace `odools.toml` has keys but no `[[config]]` table, so the
-  server ignores it.
-
-The server's own messages are forwarded too: config and runtime
-diagnostics, loading statuses other than start and stop, an invalid
-`python_path`, restart requests (the client restarts) and crashes.
+The plugin forwards the server's messages: config and runtime diagnostics,
+loading statuses other than start and stop, an invalid `python_path`,
+restart requests (the client restarts) and crashes.
 
 ==============================================================================
 10. LIMITATIONS                                          *odoo_ls-limitations*

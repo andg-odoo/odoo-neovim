@@ -33,10 +33,8 @@ First versioned release, turning the configuration snippet into a full client.
 - `require('odoo_ls')` with `setup()`, `restart()` and `set_profile()`.
 - Handling of the server's `$Odoo/*` notifications: configuration snapshot,
   diagnostics, loading status, crashes.
-- `:checkhealth odoo_ls`, with the active profile's file-set keys and every
+- `:checkhealth odoo_ls`, with every key of the active profile and every
   config and server diagnostic.
-- One-time notices for a `main` profile left unselected and for an
-  `odools.toml` without a `[[config]]` table.
 
 ### Changed
 
