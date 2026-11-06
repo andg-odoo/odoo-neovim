@@ -27,6 +27,7 @@ function M.check()
     user = 'user cmd (vim.lsp.config/setup)',
     managed = 'managed ' .. tostring(resolved.tag),
     legacy = 'legacy data-dir binary',
+    mason = 'mason package',
     path = 'PATH',
     none = 'none',
   })[source]
@@ -53,7 +54,8 @@ function M.check()
     end
     local found = version:match('(%d+%.%d+%.%d+)')
     if found and found ~= server.VERSION then
-      local fix = source == 'managed' and 'Run :OdooLs install' or 'Run :OdooLs install, or install odoo_ls_server ' .. server.VERSION
+      local fix = ({ managed = 'Run :OdooLs install', mason = 'Run :MasonInstall odoo-ls@' .. server.VERSION })[source]
+        or 'Run :OdooLs install, or install odoo_ls_server ' .. server.VERSION
       h.warn(('server %s does not match the plugin version %s'):format(found, server.VERSION), { fix })
     end
   end

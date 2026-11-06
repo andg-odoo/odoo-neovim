@@ -70,10 +70,10 @@ end
 
 ---@class odoo_ls.Resolution
 ---@field cmd string[]
----@field source 'managed'|'legacy'|'path'|'none'
+---@field source 'managed'|'legacy'|'mason'|'path'|'none'
 ---@field tag string?
 
---- Resolve the default launch command: managed install, then the legacy data-dir binary, then PATH.
+--- Resolve the default launch command: managed install, legacy data-dir binary, mason package, then PATH.
 ---@return odoo_ls.Resolution
 function M.resolve()
   local tag = M.tag()
@@ -84,6 +84,11 @@ function M.resolve()
   local legacy = M.root .. '/' .. EXE
   if vim.fn.executable(legacy) == 1 then
     return { cmd = { legacy }, source = 'legacy' }
+  end
+  -- The package dir, not mason's bin/ link, so the server finds the typeshed next to its executable
+  local mason = ('%s/packages/odoo-ls/%s'):format(vim.env.MASON or vim.fn.stdpath('data') .. '/mason', EXE)
+  if vim.fn.executable(mason) == 1 then
+    return { cmd = { mason }, source = 'mason' }
   end
   return { cmd = { 'odoo_ls_server' }, source = vim.fn.executable('odoo_ls_server') == 1 and 'path' or 'none' }
 end
