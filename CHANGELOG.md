@@ -41,5 +41,6 @@ First versioned release, turning the configuration snippet into a full client.
 ### Changed
 
 - The default launch command is `odoo_ls_server`, found on `PATH`.
+- A single client and server run per Neovim, shared by every buffer.
 - Only `utf-16` is advertised as position encoding, so the client can share
   buffers with lemminx.

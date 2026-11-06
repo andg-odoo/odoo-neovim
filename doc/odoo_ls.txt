@@ -24,7 +24,9 @@ no keymaps or UI beyond |vim.notify()| and |vim.ui.select()|.
 
 The client attaches to `python`, `xml`, `csv`, `javascript` and `typescript`
 buffers that have an `odools.toml` in their directory or above it. The
-directory holding the nearest one becomes the workspace folder.
+directory holding the nearest one becomes the workspace folder. Neovim runs
+a single odoo-ls server, so buffers opened later under another `odools.toml`
+join the running client and its workspace folder.
 
 Requirements:
 - Neovim 0.12 or later.
@@ -78,7 +80,8 @@ cmd                                                        *odoo_ls-setup-cmd*
 :OdooLs profile                                              *:OdooLs-profile*
     Pick a profile from the last configuration the server sent, through
     |vim.ui.select()|, and restart the server with it. The list ends with
-    `"Disabled"`. Warns when no configuration was received yet.
+    `"Disabled"`. Warns when the server is not running or has not sent its
+    configuration yet.
 
 :OdooLs restart                                              *:OdooLs-restart*
     Restart the client with `:lsp restart odoo_ls`, keeping its buffers.
@@ -101,7 +104,7 @@ odoo_ls.restart()                                          *odoo_ls.restart()*
 
 odoo_ls.set_profile({profile})                         *odoo_ls.set_profile()*
     Select {profile} (string) in the stored config and in the running
-    clients, then restart. `"Disabled"` makes the server idle.
+    client, then restart. `"Disabled"` makes the server idle.
 
 ==============================================================================
 6. SERVER BINARY                                              *odoo_ls-binary*

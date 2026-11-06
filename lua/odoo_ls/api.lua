@@ -9,14 +9,19 @@ local function notify(msg, level)
   vim.notify(msg, level, { title = 'odoo_ls' })
 end
 
----@return vim.lsp.Client[]
-local function get_clients()
-  return vim.lsp.get_clients({ name = NAME })
+--- The running client, skipping the old one that `:lsp restart` is still stopping.
+---@return vim.lsp.Client?
+local function get_client()
+  return vim.iter(vim.lsp.get_clients({ name = NAME })):find(function(client)
+    return not client:is_stopped()
+  end)
 end
+
+M.get_client = get_client
 
 ---@return string
 local function active_profile()
-  local client = get_clients()[1]
+  local client = get_client()
   if client and client.config and client.config.settings then
     return vim.tbl_get(client.config.settings, 'Odoo', 'selectedProfile') or 'default'
   end
@@ -28,18 +33,19 @@ M.active_profile = active_profile
 
 --- Restart the server on the same buffers, or enable it when no client runs.
 function M.restart()
-  if #get_clients() == 0 then
+  if not get_client() then
     vim.lsp.enable(NAME)
     return
   end
   vim.cmd.lsp({ 'restart', NAME })
 end
 
---- Select `profile` in the stored spec and the running clients' settings, then restart.
+--- Select `profile` in the stored spec and the running client's settings, then restart.
 ---@param profile string
 function M.set_profile(profile)
   vim.lsp.config(NAME, { settings = { Odoo = { selectedProfile = profile } } })
-  for _, client in ipairs(get_clients()) do
+  local client = get_client()
+  if client then
     client.config.settings = client.config.settings or {}
     client.config.settings.Odoo = client.config.settings.Odoo or {}
     client.config.settings.Odoo.selectedProfile = profile
@@ -49,6 +55,10 @@ end
 
 --- Pick a profile from the last snapshot, or `"Disabled"` to idle the server, and apply it.
 function M.select_profile()
+  if not get_client() then
+    notify('odoo_ls is not running', vim.log.levels.WARN)
+    return
+  end
   if not protocol.state.profiles then
     notify('no configuration received from the server yet', vim.log.levels.WARN)
     return

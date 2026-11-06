@@ -13,7 +13,9 @@ local st = protocol.state
 
 function M.check()
   local h = vim.health
-  local profile = require('odoo_ls.api').active_profile()
+  local api = require('odoo_ls.api')
+  local profile = api.active_profile()
+  local c = api.get_client()
   h.start('odoo-ls.nvim')
 
   if vim.fn.has('nvim-0.12') == 1 then
@@ -56,11 +58,10 @@ function M.check()
       pinned = cmd[i + 1]
     end
   end
-  local running = vim.lsp.get_clients({ name = NAME })[1]
   if pinned and not uv.fs_stat(vim.fs.normalize(pinned)) then
     h.error('--config-path points at a missing file: ' .. pinned)
   end
-  local toml = running and running.root_dir and running.root_dir .. '/odools.toml'
+  local toml = c and c.root_dir and c.root_dir .. '/odools.toml'
   if toml and protocol.lacks_config_table(toml) then
     h.warn('odools.toml has no [[config]] table, so the server ignores it: ' .. vim.fn.fnamemodify(toml, ':~'), { 'Wrap its keys in [[config]]' })
   end
@@ -75,7 +76,7 @@ function M.check()
     h.info('no odools.toml contributed a value - the server is running on built-in defaults')
   else
     -- No snapshot yet (client down, or setConfiguration not in): show what would be read.
-    local start_dir = (running and running.root_dir) or vim.fn.getcwd()
+    local start_dir = (c and c.root_dir) or vim.fn.getcwd()
     local found = vim.fs.find('odools.toml', { upward = true, path = start_dir })
     local candidates = {}
     if pinned then
@@ -96,13 +97,10 @@ function M.check()
     end
   end
 
-  local clients = vim.lsp.get_clients({ name = NAME })
-  if #clients == 0 then
+  if not c then
     h.info('client not running (it attaches to python/xml/csv/js/ts files under an odools.toml)')
   else
-    for _, c in ipairs(clients) do
-      h.ok(('client running (id=%d, server pid=%s, profile=%s)'):format(c.id, tostring(st.pid or '?'), profile))
-    end
+    h.ok(('client running (id=%d, server pid=%s, profile=%s)'):format(c.id, tostring(st.pid or '?'), profile))
     if st.loading then
       h.info('loading status: ' .. st.loading)
     end
@@ -126,20 +124,18 @@ function M.check()
       h.info('buffer scope not checked (no odoo_path/addons_paths received from the server yet)')
     end
     local in_scope = 0
-    for _, c in ipairs(clients) do
-      for buf in pairs(c.attached_buffers or {}) do
-        local name = vim.api.nvim_buf_get_name(buf)
-        if name ~= '' then
-          local real = uv.fs_realpath(name) or name
-          local short = vim.fn.fnamemodify(name, ':~')
-          if #roots > 0 and not under(real, roots) then
-            h.warn(short .. ' is OUTSIDE odoo_path/addons_paths - analyzed as an isolated custom entry point (model completions/hover degraded)', {
-              'Add its addons directory to addons_paths in odools.toml, or',
-              'switch to a profile whose odoo_path covers this checkout (:OdooLs profile)',
-            })
-          elseif #roots > 0 then
-            in_scope = in_scope + 1
-          end
+    for buf in pairs(c.attached_buffers or {}) do
+      local name = vim.api.nvim_buf_get_name(buf)
+      if name ~= '' then
+        local real = uv.fs_realpath(name) or name
+        local short = vim.fn.fnamemodify(name, ':~')
+        if #roots > 0 and not under(real, roots) then
+          h.warn(short .. ' is OUTSIDE odoo_path/addons_paths - analyzed as an isolated custom entry point (model completions/hover degraded)', {
+            'Add its addons directory to addons_paths in odools.toml, or',
+            'switch to a profile whose odoo_path covers this checkout (:OdooLs profile)',
+          })
+        elseif #roots > 0 then
+          in_scope = in_scope + 1
         end
       end
     end
@@ -148,7 +144,6 @@ function M.check()
     end
 
     -- Watching needs both the server registration and the client capability (neovim#27807)
-    local c = clients[1]
     local advertised = vim.tbl_get(c.capabilities, 'workspace', 'didChangeWatchedFiles', 'dynamicRegistration') == true
     local registered = false
     for _, regs in pairs(c.registrations or {}) do

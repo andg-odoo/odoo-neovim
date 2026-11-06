@@ -13,6 +13,7 @@ local levels = vim.log.levels
 ---@field message string
 
 ---@class odoo_ls.State
+---@field client_id integer|nil    client of the server that sent `$Odoo/setPid`
 ---@field pid integer|nil          server process id (from `$Odoo/setPid`)
 ---@field loading string|nil       last loading status ('start'|'stop'|other)
 ---@field js boolean|nil           whether the server's tsserver runs (from `$Odoo/jsLsStatus`)
@@ -42,7 +43,8 @@ end
 local handlers = {}
 
 -- The first notification of a new server, so state left by a previous one is cleared here
-handlers['$Odoo/setPid'] = function(_, result)
+handlers['$Odoo/setPid'] = function(_, result, ctx)
+  state.client_id = ctx.client_id
   state.pid = type(result) == 'table' and result.server_pid or nil
   state.crashed, state.crash_info = false, nil
   state.config_diagnostics, state.server_diagnostics = {}, {}
@@ -207,8 +209,13 @@ end
 M.handlers = handlers
 M.state = state
 
---- Reset volatile state when the client exits, called from the spec `on_exit`.
-function M._on_exit()
+--- Reset volatile state when its client exits, called from the spec `on_exit`.
+---@param client_id integer
+function M._on_exit(client_id)
+  -- After a restart the new server may have written the state before the old client exits
+  if client_id ~= state.client_id then
+    return
+  end
   state.pid = nil
   state.js = nil
   state.loading = 'stop'

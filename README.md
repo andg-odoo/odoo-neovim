@@ -50,7 +50,8 @@ require('odoo_ls').setup({
 ## Configuration
 
 The client attaches only to files under an `odools.toml`, and that file's
-directory becomes the workspace folder. Put it in the directory that holds both
+directory becomes the workspace folder. Neovim runs a single server, which
+buffers under another `odools.toml` join. Put it in the directory that holds both
 odoo and enterprise. Each profile is a `[[config]]` table:
 
 ```toml

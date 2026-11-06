@@ -86,11 +86,29 @@ describe('protocol', function()
   it('forgets the previous server crash and diagnostics when a new server starts', function()
     handlers['Odoo/displayCrashNotification'](nil, { crashInfo = 'panicked' })
     handlers['$Odoo/diagnostic_config'](nil, { action = 'extend', messages = { { level = 2, message = 'late' } } })
-    handlers['$Odoo/setPid'](nil, { server_pid = 42 })
+    handlers['$Odoo/setPid'](nil, { server_pid = 42 }, { client_id = 7 })
     local st = protocol.state
     assert.same({ 42, false }, { st.pid, st.crashed })
     assert.same({}, st.config_diagnostics)
     assert.same({}, st.server_diagnostics)
+  end)
+
+  it('keeps the state of a new server when the client it replaced exits', function()
+    handlers['$Odoo/setPid'](nil, { server_pid = 1 }, { client_id = 1 })
+    handlers['$Odoo/setPid'](nil, { server_pid = 2 }, { client_id = 2 })
+    protocol._on_exit(1)
+    assert.equal(2, protocol.state.pid)
+    protocol._on_exit(2)
+    assert.is_nil(protocol.state.pid)
+  end)
+
+  it('says the server is not running when a profile is picked without a client', function()
+    local notices = {}
+    vim.notify = function(msg)
+      table.insert(notices, msg)
+    end
+    require('odoo_ls.api').select_profile()
+    assert.same({ 'odoo_ls is not running' }, notices)
   end)
 
   describe('health', function()
