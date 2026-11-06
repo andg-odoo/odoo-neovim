@@ -120,7 +120,7 @@ function M.check()
     -- Files outside odoo_path/addons_paths are analyzed as isolated custom entry points
     local function realpaths(list)
       return vim.tbl_map(function(p)
-        return uv.fs_realpath(p) or p
+        return vim.fs.normalize(uv.fs_realpath(p) or p)
       end, list)
     end
     local function under(path, dirs)
@@ -141,7 +141,7 @@ function M.check()
       for buf in pairs(c.attached_buffers or {}) do
         local name = vim.api.nvim_buf_get_name(buf)
         if name ~= '' then
-          local real = uv.fs_realpath(name) or name
+          local real = vim.fs.normalize(uv.fs_realpath(name) or name)
           local short = vim.fn.fnamemodify(name, ':~')
           if #roots > 0 and not under(real, roots) then
             h.warn(short .. ' is OUTSIDE odoo_path/addons_paths - analyzed as an isolated custom entry point (model completions/hover degraded)', {

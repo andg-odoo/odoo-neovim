@@ -134,7 +134,7 @@ handlers['$Odoo/setConfiguration'] = function(_, result, ctx)
         sources[key] = vim.tbl_keys(set)
         table.sort(sources[key])
         for src in pairs(set) do
-          if src:sub(1, 1) == '/' then
+          if vim.fn.isabsolutepath(src) == 1 then
             files[src] = true
           end
         end
