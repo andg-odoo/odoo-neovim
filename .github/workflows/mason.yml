@@ -1,0 +1,41 @@
+name: mason
+on: [push, workflow_dispatch]
+jobs:
+  mason:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: mason.nvim
+        run: git clone -q https://github.com/mason-org/mason.nvim "$RUNNER_TEMP/mason.nvim" && git -C "$RUNNER_TEMP/mason.nvim" checkout -q 2a6940af80375532e5e9e7c1f2fc6319a1b7a69d
+      - name: odoo core and a test addon
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/odoo/odoo "$RUNNER_TEMP/odoo"
+          git -C "$RUNNER_TEMP/odoo" sparse-checkout set odoo
+          ws="$RUNNER_TEMP/ws"
+          mkdir -p "$ws/my_mod/models"
+          py=$(python -c 'import sys; print(sys.executable)')
+          root=$(cd "$RUNNER_TEMP" && pwd -W 2>/dev/null || pwd)
+          printf "[[config]]\nname = 'default'\nodoo_path = '%s/odoo'\naddons_paths = ['%s/ws']\npython_path = '%s'\n" "$root" "$root" "$py" > "$ws/odools.toml"
+          cat "$ws/odools.toml"
+          printf "{'name': 'My mod', 'depends': ['base'], 'license': 'LGPL-3'}\n" > "$ws/my_mod/__manifest__.py"
+          echo "from . import models" > "$ws/my_mod/__init__.py"
+          echo "from . import partner" > "$ws/my_mod/models/__init__.py"
+          printf "import os\n\nfrom odoo import models\n\n\nclass ResPartner(models.Model):\n    _inherit = 'res.partner'\n\n    def foo(self):\n        return os.getcwd(), 'a'.upper()\n" > "$ws/my_mod/models/partner.py"
+      - name: install through mason and hover
+        run: |
+          export WS="$RUNNER_TEMP/ws" MASON_NVIM="$RUNNER_TEMP/mason.nvim"
+          nvim --clean --headless -u ci/mason.lua
